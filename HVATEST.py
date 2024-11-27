@@ -5,196 +5,94 @@ import numpy as np
 from qiskit_nature.units import DistanceUnit
 from qiskit_nature.second_q.drivers import PySCFDriver
 from pyscf import gto, scf, mcscf
-
 from qiskit_algorithms import NumPyMinimumEigensolver
 from qiskit_nature.second_q.algorithms import GroundStateEigensolver
 from qiskit_nature.second_q.mappers import JordanWignerMapper
-# General imports
 import numpy as np
-
-# Pre-defined ansatz circuit and operator class for Hamiltonian
 from qiskit.circuit.library import EfficientSU2, RealAmplitudes, TwoLocal
 from qiskit.quantum_info import SparsePauliOp
-
-# SciPy minimizer routine
 from scipy.optimize import minimize
-
-# Plotting functions
 import matplotlib.pyplot as plt
-
 import os
 import numpy as np
-# Qiskit imports
 from qiskit.circuit.library import EfficientSU2
 from qiskit.quantum_info import SparsePauliOp
 from qiskit.circuit import QuantumCircuit
 from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
-from qiskit_ibm_runtime import SamplerV2 as Sampler
 from qiskit_ibm_runtime.fake_provider import FakeMelbourneV2
 from qiskit.primitives import StatevectorEstimator as Estimator, StatevectorSampler as Sampler
 from qiskit.primitives import StatevectorEstimator as Estimator
-from qiskit.primitives import StatevectorSampler as Sampler
-# SciPy minimizer routine
 from scipy.optimize import minimize
 import time
-from qiskit_aer.primitives import EstimatorV2
 from qiskit_nature.second_q.operators import FermionicOp
-
 from qiskit_algorithms.optimizers import SPSA, COBYLA, L_BFGS_B, SLSQP, ADAM, NELDER_MEAD, POWELL, NELDER_MEAD
 
-# Use PySCFDriver to get the molecular data
 """
+# Use PySCFDriver to get the molecular data
 driver_H2 = PySCFDriver(atom='H 0 0 0; H 0 0 .74', basis='sto-3g')
 #driver_H2 = PySCFDriver(atom='Li .0 .0 .0; H .0 .0 1.6', unit=DistanceUnit.ANGSTROM, basis='sto3g')
-
 molecule = driver_H2.run()
 hamiltonian =  molecule.hamiltonian
 coef = hamiltonian.electronic_integrals
-print(coef.alpha)
 second_q_mapper = hamiltonian.second_q_op()
-
-print(second_q_mapper)
-
-
+#print(second_q_mapper)
 algo = NumPyMinimumEigensolver()
-#algo.filter_criterion = molecule.get_default_filter_criterion()
+algo.filter_criterion = molecule.get_default_filter_criterion()
 solver = GroundStateEigensolver(JordanWignerMapper(), algo)
-
 result = solver.solve(molecule)
-
-print(f"Total ground state energy = {result.total_energies[0]:.4f}")
-
+#print(f"Total ground state energy = {result.total_energies[0]:.4f}")
 GroundEigen = result.groundenergy
 print(f"Ground state energy: {GroundEigen}")
-
 sol = NumPyMinimumEigensolver().compute_minimum_eigenvalue(JordanWignerMapper().map(second_q_mapper))
 resultss = molecule.interpret(sol)
-
+print(f"Total ground state energy = {resultss.total_energies[0]:.4f}")
 jw_mapper = JordanWignerMapper()
 qubit_op_jwt = jw_mapper.map(second_q_mapper)
-qubit_op_jwtG = qubit_op_jwt.group_commuting()
-
-Pauli_list = []
-for i in range(len(qubit_op_jwtG)):
-    Pauli_list.append(qubit_op_jwtG[i]._pauli_list)
-print(Pauli_list)    
-
-
-num_qubits = qubit_op_jwt.num_qubits
-coeffs = qubit_op_jwt.coeffs
-pauli_terms = list(qubit_op_jwt._pauli_list)
+qubit_op_jwt = qubit_op_jwt / max(abs(qubit_op_jwt.coeffs))
 """
 
 hamiltonian = SparsePauliOp(["ZZ", "IX", "XI"], coeffs=[-0.2, -1, -1])
-
 #hamiltonian = SparsePauliOp(["ZZI", "IZZ", "IXI"])
-
 pauli_terms = list(hamiltonian._pauli_list)
 qubit_op_jwt = hamiltonian
 
 sol = NumPyMinimumEigensolver().compute_minimum_eigenvalue(hamiltonian)
 GroundEigen = sol.eigenvalue.real
 
-
-def indexesPaulis(pauli_terms):
-    indexX = []
-    indexY = []
-    indexZ = []
-    
-    for i in range(len(pauli_terms)):
-        for j in range(len(pauli_terms[i])):
-            pauli = pauli_terms[i]
-            if pauli[j] == Pauli('I'):
-                continue
-            elif pauli[j] == Pauli('X'):
-                indexX.append([i,j])
-            elif pauli[j] == Pauli('Y'):
-                indexY.append([i,j])
-            elif pauli[j] == Pauli('Z'):    
-                indexZ.append([i,j])
-
-    return indexX, indexY, indexZ
-
-indexX, indexY, indexZ = indexesPaulis(pauli_terms)
-print(indexX, indexY, indexZ)
-
-num_qubits = qubit_op_jwt.num_qubits
-coeffs = qubit_op_jwt.coeffs
-pauli_terms = list(qubit_op_jwt._pauli_list)
-params = [Parameter(f'theta_{i}') for i in range(len(pauli_terms))]
-
-
-from itertools import groupby
-from qiskit import QuantumCircuit
-from qiskit.circuit import Parameter
-
-
-"""
-def HVACIRQ(indexX, indexY, indexZ, layers=1):
-    
-    #Generate a Hamiltonian Variational Ansatz circuit with layering.
-    #
-    #Args:
-    #    indexX, indexY, indexZ (list): List of Pauli operators (Pauli objects from qiskit.quantum_info).
-    #    layers (int): Number of layers to repeat the Ansatz.
-    #
-    #Returns:
-    #    QuantumCircuit: The HVA circuit with the specified number of layers.
-    
-    index_data = {
-        'x': indexX,
-        'y': indexY,
-        'z': indexZ
-    }
-    
-    qc = QuantumCircuit(num_qubits)
-    params = []  
-    
-    for layer in range(layers):
-        unique_keys = set()
-        for index_list in index_data.values():
-            unique_keys.update(idx[0] for idx in index_list)
-        unique_keys = sorted(unique_keys)
-        
-        layer_params = {key: Parameter(f'theta_{layer}_{key}') for key in unique_keys}
-        params.append(layer_params)
-        
-        for rotation_type, index_list in index_data.items():
-            index_list.sort(key=lambda x: x[0])  
-            
-            for key, group in groupby(index_list, lambda x: x[0]):
-                indices = list(group)
-                count = len(indices)
-                param = layer_params[key]  
-                
-                for i in range(0, count - 1, 2):
-                    control, target = indices[i][1], indices[i + 1][1]
-                    if rotation_type == 'x':
-                        qc.crx(param, control, target)
-                    elif rotation_type == 'y':
-                        qc.cry(param, control, target)
-                    elif rotation_type == 'z':
-                        qc.crz(param, control, target)
-                
-                if count % 2 != 0:
-                    target = indices[-1][1]
-                    if rotation_type == 'x':
-                        qc.rx(param, target)
-                    elif rotation_type == 'y':
-                        qc.ry(param, target)
-                    elif rotation_type == 'z':
-                        qc.rz(param, target)
-    
-    return qc
-"""
 from qiskit.synthesis import EvolutionSynthesis, LieTrotter
-from qiskit.circuit.library import PauliEvolutionGate
+from qiskit.circuit.library import PauliEvolutionGate, HamiltonianGate
 from qiskit.circuit import ParameterVector, Parameter
 from qiskit.quantum_info import Pauli
 from qiskit import QuantumCircuit
 
 
-def HVACIRQ(hamiltonian, num_layers):
+def _is_pauli_identity(operator):
+    if isinstance(operator, SparsePauliOp):
+        if len(operator.paulis) == 1:
+            operator = operator.paulis[0]  
+        else:
+            return False
+    if isinstance(operator, Pauli):
+        return not np.any(np.logical_or(operator.x, operator.z))
+    return False
+
+
+def _remove_identities(operators):
+    identity_ops = {index for index, op in enumerate(operators) if _is_pauli_identity(op)}
+
+    if len(identity_ops) == 0:
+        return operators
+
+    cleaned_ops = [op for i, op in enumerate(operators) if i not in identity_ops]
+    
+
+    return cleaned_ops
+
+#print("HAMILTONIAN0:", hamiltonian)
+hamiltonian = _remove_identities(qubit_op_jwt)
+#print("HAMILTONIAN1:", hamiltonian)
+
+def HVACIRQ(hamiltonian, num_layers, name = "ansatz_hva"):
     
     #Creates an ansatz circuit based on commuting groups of the given Hamiltonian.
     #
@@ -206,31 +104,37 @@ def HVACIRQ(hamiltonian, num_layers):
     #    QuantumCircuit: A parameterized quantum circuit.
     #    list: A list of parameters used in the circuit.
     
-    hamiltonian_grouped = hamiltonian.group_commuting()
+    #max_coeff = max(abs(hamiltonian.coeffs))
+    #hamiltonian = hamiltonian / max_coeff
+
+    
+    hamiltonian_grouped = qubit_op_jwt.group_commuting()
     num_qubits = hamiltonian.num_qubits  
 
-    qc = QuantumCircuit(num_qubits)
-    params = []  
+    qc = QuantumCircuit(num_qubits, name = "ansatz_hva")
 
     for layer in range(num_layers):
         layer_params = []
         for group_index, commuting_group in enumerate(hamiltonian_grouped):
             
+            
             theta = Parameter(f"theta_{layer}_{group_index}")
             layer_params.append(theta)
 
+            #print(commuting_group, theta)
             
             evolution_gate = PauliEvolutionGate(commuting_group, theta)
-            evolution = LieTrotter().synthesize(evolution_gate)
-
+            #print(evolution_gate)
+            #print(commuting_group)
+            #print("PARAMEVOLGATE:", evolution_gate._params)
+            evolution = LieTrotter(insert_barriers=True).synthesize(evolution_gate)
+            
             
             qc.append(evolution, qc.qubits)
 
-        params.append(layer_params)
+        #params.extend(layer_params)
 
     return qc
-
-
 
 cost_history_dict = {
     "prev_vector": None,
@@ -263,6 +167,7 @@ def cost_func_vqe(params, ansatz, hamiltonian, estimator):
 
     return energy
 
+
 import matplotlib.pyplot as plt
 
 def vqe_optimization_loop_with_plot(ansatz_list, estimator, max_iters):
@@ -286,29 +191,46 @@ def vqe_optimization_loop_with_plot(ansatz_list, estimator, max_iters):
     for ansatz in ansatz_list:
         print(f"Ansatz {ansatz.name if hasattr(ansatz, 'name') else 'Unnamed'} qubits: {ansatz.num_qubits}")
         ansatz_name = ansatz.name if hasattr(ansatz, 'name') else 'Unnamed'
+        print(f"Optimizing for Ansatz: {ansatz_name}")
         
         fake_paris = FakeMelbourneV2()
         target = fake_paris.target
         pm = generate_preset_pass_manager(target=target, optimization_level=3)
-        
         ansatz_isa = pm.run(ansatz)
-        
-        
-        print(f"Number of qubits in Hamiltonian: {qubit_op_jwt.num_qubits}")
 
-        hamiltonian_isa = qubit_op_jwt.apply_layout(layout=ansatz_isa.layout)
         
-        print(f"\nOptimizing for Ansatz: {ansatz_name}")
+        #print(f"Number of qubits in Hamiltonian: {qubit_op_jwt.num_qubits}")
+        if ansatz_name == "ansatz_hva":
+            hamiltonian_isa = None
+            hamiltonian_grouped = qubit_op_jwt.group_commuting()
+            unified_terms = []
 
+            # Format terms properly
+            for group in hamiltonian_grouped:
+                group_mapped = group.apply_layout(layout=ansatz_isa.layout)
+                for pauli, coeff in zip(group_mapped.paulis.to_labels(), group_mapped.coeffs):
+                    unified_terms.append((pauli, coeff))
+    
+            # Create SparsePauliOp
+            hamiltonian_isa = SparsePauliOp.from_list(unified_terms)
+        else:
+            hamiltonian_isa = qubit_op_jwt.apply_layout(layout=ansatz_isa.layout)
+
+                    
+        
+        #hamiltonian_isa = qubit_op_jwt.apply_layout(layout=ansatz_isa.layout)
+
+        print(f"\nOptimizing for Ansatz: {ansatz}")
+        print(hamiltonian_isa)
         cost_history_dict["cost_history"] = []
         cost_history_dict["iters"] = 0
 
-        def cost_func(params, ansatz, hamiltonian_isa, estimator):
-            return cost_func_vqe(params, ansatz, hamiltonian_isa, estimator)
+        def cost_func(params, ansatz_isa, hamiltonian_isa, estimator):
+            return cost_func_vqe(params, ansatz_isa, hamiltonian_isa, estimator)
 
-        #x = 2 * np.pi * np.random.random(ansatz.num_parameters)
-        x = np.zeros(ansatz.num_parameters)
-
+        x = np.random.uniform(np.pi, np.pi, ansatz.num_parameters)
+        #x = np.zeros(ansatz.num_parameters)
+        
         result = minimize(
             cost_func,
             x,
@@ -316,6 +238,15 @@ def vqe_optimization_loop_with_plot(ansatz_list, estimator, max_iters):
             method="COBYLA",
             options={'maxiter': max_iters, 'disp': True}
         )
+        
+        """
+        adam_optimizer = ADAM(maxiter=max_iters)
+        result = adam_optimizer.minimize(
+            fun=lambda params: cost_func(params, ansatz_isa, hamiltonian_isa, estimator),
+            x0=x
+        )   
+        """
+
         end_time = time.time()
         execution_time = end_time - start_time
 
@@ -326,7 +257,7 @@ def vqe_optimization_loop_with_plot(ansatz_list, estimator, max_iters):
             "cost_history": cost_history_dict["cost_history"]
         }
 
-        print(f"Optimization completed for Ansatz: {ansatz_name}")
+        print(f"Optimization completed for Ansatz: {ansatz.name}")
         print(f"Final energy: {result.fun}, Iterations: {max_iters}, Time: {execution_time:.2f}s")
 
     plt.figure(figsize=(10, 6))
@@ -343,44 +274,34 @@ def vqe_optimization_loop_with_plot(ansatz_list, estimator, max_iters):
     plt.grid()
     plt.show()
 
-
     return results
 
 estimator = Estimator()
-sampler = Sampler()
 
 
-number_of_reps = 10
+number_of_reps = 2
 
 num_qubits = qubit_op_jwt.num_qubits  
-composed_circuit =  HVACIRQ(qubit_op_jwt, num_layers = number_of_reps)
+#composed_circuit =  HVACIRQ(qubit_op_jwt, num_layers = number_of_reps)
 #composed_circuit = HVACIRQ(indexX, indexY, indexZ, layers=1)
-composed_circuit.decompose(reps=2).draw('mpl')
+#composed_circuit.draw('mpl')
+#composed_circuit.decompose().draw('mpl')
 ###########plt.show()
 
 
 ansatz_hva = HVACIRQ(qubit_op_jwt, num_layers=number_of_reps)
-#ansatz_hva = HVACIRQ(indexX, indexY, indexZ, layers=number_of_reps)
+print("NAMEEEEEEE", ansatz_hva.name)
+ansatz_hva.draw('mpl')
+#ansatz_hva.decompose().draw('mpl')
 ansatz_eff = EfficientSU2(num_qubits=num_qubits, entanglement='linear', reps = number_of_reps)  
 realamp =  RealAmplitudes(num_qubits=num_qubits, entanglement='linear', reps = number_of_reps)
 TwoLoc = TwoLocal(num_qubits=num_qubits, reps = number_of_reps, rotation_blocks=['ry', 'rz'], entanglement_blocks='cz')
 
 
-print(f"Number of parameters in HVA Ansatz: {ansatz_hva.num_parameters}")
-#print(f"Number of parameters in EfficientSU2 Ansatz: {ansatz_eff.num_parameters}")
-#print(f"number of qubits of ansatz_eff: {ansatz_eff.num_qubits}")
-print(f"Number of qubits in Hamiltonian: {qubit_op_jwt.num_qubits}")
-print(f"Number of qubits in Ansatz: {ansatz_hva.num_qubits}")
-#print("OTHER APPR: ",resultss.total_energies[0].real)
-
-
-ansatz_list = [ansatz_eff, ansatz_hva, realamp, TwoLoc]  
-#ansatz_list = [ansatz_hva]  
+#ansatz_list = [ansatz_eff, ansatz_hva, realamp, TwoLoc]  
+ansatz_list = [ansatz_hva]  
 results = vqe_optimization_loop_with_plot(
     ansatz_list=ansatz_list,
     estimator=estimator,
-    max_iters=500
+    max_iters=100
 )
-
-
-
