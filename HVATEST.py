@@ -37,6 +37,9 @@ import itertools
 
 
 def _is_pauli_identity(operator):
+
+    """Check if a Pauli operator is the identity operator."""
+    
     if isinstance(operator, SparsePauliOp):
         if len(operator.paulis) == 1:
             operator = operator.paulis[0]  
@@ -89,9 +92,26 @@ print(f"Total ground state energy = {resultss.total_energies[0]:.4f}")
 jw_mapper = JordanWignerMapper()
 hamiltonian = jw_mapper.map(second_q_mapper)
 """
+"""
+#Test ising model
+from qiskit_nature.second_q.hamiltonians import IsingModel
+from qiskit_nature.second_q.hamiltonians.lattices import LineLattice, BoundaryCondition
+
+
+line_lattice = LineLattice(num_nodes=2, boundary_condition=BoundaryCondition.OPEN)
+
+ising_model = IsingModel(
+    line_lattice.uniform_parameters(
+        uniform_interaction=-1.0,
+        uniform_onsite_potential=1.0,
+    ),
+)
+hamiltonian = ising_model.second_q_op()
+"""
 #hamiltonian = SparsePauliOp(["ZZI", "IZZ", "IXI"])
-hamiltonian = SparsePauliOp(["ZZ", "IX", "XI", "II"], coeffs=[1.0, 0.5, 0.5, 0.5])
-#hamiltonian = SparsePauliOp(["ZZZI","IZZI", "IIII", "ZIIZ", "IXXI", "YIIY"], coeffs=[1.0, 0.5, 0.5, 0.5, 0.5, 0.5])
+#hamiltonian = SparsePauliOp(["ZZ", "IX", "XI", "II"], coeffs=[1.0, 0.5, 0.5, 1 ])
+hamiltonian = SparsePauliOp(["ZZZI","IZZI", "IIII", "ZIIZ", "IXXI", "XIIX"])
+#hamiltonian = SparsePauliOp(['XXII', 'YYII', 'ZZII', 'IXXI', 'IYYI', 'IZZI', 'IIXX', 'IIYY', 'IIZZ', 'ZIII', 'IZII', 'IIZI', 'IIIZ'], coeffs=[1.+0.j,  1.+0.j , 1.+0.j , 1.+0.j , 1.+0.j  ,1.+0.j,  1.+0.j , 1.+0.j , 1.+0.j , 0.5+0.j , 0.5+0.j , 0.5+0.j  ,0.5+0.j])
 #hamiltonian = SparsePauliOp(["ZZZI","IZZI", "IIII", "ZIIZ", "XIIX"])
 #hamiltonian = SparsePauliOp(["ZZZI","IZZI", "IIII", "ZIIZ", "YIIY"])
 hamiltonian = _remove_identities(hamiltonian)
@@ -151,7 +171,6 @@ def evolved_operator_ansatz(
     if any(op.num_qubits != num_qubits for op in operators):
         raise ValueError("Inconsistent numbers of qubits in the operators.")
 
-    # get the total number of parameters
     if isinstance(parameter_prefix, str):
         parameters = ParameterVector(parameter_prefix, reps * num_operators)
         param_iter = iter(parameters)
@@ -171,7 +190,7 @@ def evolved_operator_ansatz(
 
     circuit = QuantumCircuit(num_qubits, name=name)
 
-    # pylint: disable=cyclic-import
+
     from qiskit.circuit.library.hamiltonian_gate import HamiltonianGate
 
     for rep in range(reps):
@@ -287,6 +306,11 @@ def vqe_optimization_loop_with_plot(ansatz_list, estimator, max_iters):
         print(f"Ansatz {ansatz.name if hasattr(ansatz, 'name') else 'Unnamed'} qubits: {ansatz.num_qubits}")
         ansatz_name = ansatz.name if hasattr(ansatz, 'name') else 'Unnamed'
         print(f"Optimizing for Ansatz: {ansatz_name}")
+
+        max_param_per_layer = np.pi * .5 / num_qubits
+        num_layers = number_of_reps 
+        num_params_per_layer = ansatz.num_parameters // num_layers
+
         
         fake_paris = FakeMelbourneV2()
         target = fake_paris.target
@@ -318,7 +342,20 @@ def vqe_optimization_loop_with_plot(ansatz_list, estimator, max_iters):
         def cost_func(params, ansatz_isa, hamiltonian_isa, estimator):
             return cost_func_vqe(params, ansatz_isa, hamiltonian_isa, estimator)
 
-        x = np.random.uniform(np.pi, np.pi, ansatz.num_parameters)
+        constraints = []
+        for layer in range(num_layers):
+            def layer_constraint(params, layer=layer):
+                
+                #layer_params = params[layer * num_params_per_layer:(layer + 1) * num_params_per_layer]
+                
+                layer_params = params[layer * num_params_per_layer]
+
+                return max_param_per_layer - np.sum(layer_params)
+                #return max_param_per_layer - np.sum(layer_params)
+            constraints.append({"type": "ineq", "fun": layer_constraint})
+
+
+        x = np.random.uniform(2 * np.pi, -2 * np.pi, ansatz.num_parameters)
         #x = np.zeros(ansatz.num_parameters)
         
         result = minimize(
@@ -326,8 +363,13 @@ def vqe_optimization_loop_with_plot(ansatz_list, estimator, max_iters):
             x,
             args=(ansatz_isa, hamiltonian_isa, estimator),
             method="COBYLA",
+            constraints=constraints,
             options={'maxiter': max_iters, 'disp': True}
         )
+
+        paramVal = result.x
+        print("Constraint for each layer: ", [c["fun"](paramVal) for c in constraints])
+        stateVec = ansatz_isa.assign_parameters(paramVal)
         
         """
         adam_optimizer = ADAM(maxiter = 1000, lr = 0.01)
@@ -364,15 +406,15 @@ def vqe_optimization_loop_with_plot(ansatz_list, estimator, max_iters):
     plt.grid()
     plt.show()
 
-    return results
+    return results, paramVal, stateVec
 
 estimator = Estimator()
-number_of_reps = 10
+number_of_reps = 7
 
 
 #ansatz_hva = HVACIRQ(hamiltonian, num_layers=number_of_reps)
 ansatz_hva = evolved_operator_ansatz(hamiltonian_grouped,number_of_reps)
-print("NAMEEEEEEE", ansatz_hva.name)
+print("NAMEEEEEEE:", ansatz_hva.name)
 ansatz_hva.draw('mpl')
 num_qubits = hamiltonian[0].num_qubits 
 ansatz_eff = EfficientSU2(num_qubits=num_qubits, entanglement='linear', reps = number_of_reps)  
@@ -380,11 +422,13 @@ realamp =  RealAmplitudes(num_qubits=num_qubits, entanglement='linear', reps = n
 TwoLoc = TwoLocal(num_qubits=num_qubits, reps = number_of_reps, rotation_blocks=['ry', 'rz'], entanglement_blocks='cz')
 
 
-ansatz_list = [ansatz_eff, ansatz_hva, realamp, TwoLoc]  
-#ansatz_list = [ansatz_hva]  
-results = vqe_optimization_loop_with_plot(
-    ansatz_list=ansatz_list,
-    estimator=estimator,
-    max_iters=100
+#ansatz_list = [ansatz_eff, ansatz_hva, realamp, TwoLoc]  
+ansatz_list = [ansatz_hva]  
+results, paramVal, stateVec = vqe_optimization_loop_with_plot(
+    ansatz_list = ansatz_list,
+    estimator = estimator,
+    max_iters = 200
 )
+
+
 
